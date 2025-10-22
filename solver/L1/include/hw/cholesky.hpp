@@ -260,12 +260,39 @@ Function_cholesky_rsqrt_default:;
 template <int W1, int I1, ap_q_mode Q1, ap_o_mode O1, int N1, int W2, int I2, ap_q_mode Q2, ap_o_mode O2, int N2>
 void cholesky_rsqrt(ap_fixed<W1, I1, Q1, O1, N1> x, ap_fixed<W2, I2, Q2, O2, N2>& res) {
 Function_cholesky_rsqrt_fixed:;
-    ap_fixed<W2, I2, Q2, O2, N2> one = 1;
-    ap_fixed<W1, I1, Q1, O1, N1> sqrt_res;
-    ap_fixed<W2, I2, Q2, O2, N2> sqrt_res_cast;
-    sqrt_res = x_sqrt(x);
-    sqrt_res_cast = sqrt_res;
-    res = one / sqrt_res_cast;
+    // Switched to Newton-Raphson method to avoid high-latency division.
+    // y_n+1 = y_n * (1.5 - 0.5 * x * y_n^2)
+
+    // Define intermediate types for precision management during iteration.
+    // Using a slightly higher precision for intermediate calculations.
+    const int IntermediateW = W2 + 4;
+    const int IntermediateI = I2 + 2;
+    typedef ap_fixed<IntermediateW, IntermediateI> T_iter;
+
+    const T_iter C_1_5 = 1.5;
+    const T_iter C_0_5 = 0.5;
+
+    // Initial Guess: Use HLS float rsqrt for a good starting point.
+    // This is a good trade-off, using a fast float operation to bootstrap
+    // the fixed-point iteration.
+    T_iter y;
+    float x_float = x;
+    float y_float = hls::rsqrt(x_float);
+    y = y_float;
+
+    // Newton-Raphson Iterations
+    // This loop will be pipelined to achieve high throughput.
+    // Each iteration consists of low-latency multiplications and additions.
+    // 2 iterations are often enough for good convergence with a decent initial guess.
+NEWTON_RAPHSON_LOOP:
+    for (int i = 0; i < 2; i++) {
+#pragma HLS PIPELINE
+        T_iter y_sq = y * y;
+        T_iter term = C_1_5 - (C_0_5 * x * y_sq);
+        y = y * term;
+    }
+
+    res = y;
 }
 
 // Local multiplier to handle a complex case currently not supported by the hls::x_complex class
@@ -486,18 +513,28 @@ row_loop:
         // Diagonal calculation
         A_cast_to_sum = A[i][i];
         A_minus_sum = A_cast_to_sum - square_sum;
-        if (cholesky_sqrt_op(A_minus_sum, new_L_diag)) {
+
+        // Check for negative input before sqrt/rsqrt
+        if (hls::x_real(A_minus_sum) < 0) {
 #ifndef __SYNTHESIS__
             printf("ERROR: Trying to find the square root of a negative number\n");
 #endif
             return_code = 1;
+            new_L_diag = 0;
+            new_L_diag_recip = 0;
+        } else {
+            // Generate the reciprocal of the diagonal using the new Newton-Raphson method
+            A_minus_sum_cast_diag = A_minus_sum;
+            cholesky_rsqrt(hls::x_real(A_minus_sum_cast_diag), new_L_diag_recip);
+
+            // Calculate the sqrt by multiplying the original number by its reciprocal sqrt,
+            // eliminating a high-latency sqrt operator.
+            // For complex, the diagonal is real, so we do a real multiplication.
+            cholesky_prod_sum_mult(A_minus_sum, new_L_diag_recip, new_L_diag);
         }
+
         // Round to target format using method specifed by traits defined types.
         new_L = new_L_diag;
-        // Generate the reciprocal of the diagonal for internal use to aviod the latency of a divide in every
-        // off-diagonal calculation
-        A_minus_sum_cast_diag = A_minus_sum;
-        cholesky_rsqrt(hls::x_real(A_minus_sum_cast_diag), new_L_diag_recip);
         // Store diagonal value
         diag_internal[i] = new_L_diag_recip;
         if (LowerTriangularL == true) {
