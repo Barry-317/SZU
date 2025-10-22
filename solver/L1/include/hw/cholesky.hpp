@@ -445,7 +445,9 @@ int choleskyAlt(const InputType A[RowsColsA][RowsColsA], OutputType L[RowsColsA]
     // - Requires additional logic to generate the memory indexes
     // - For smaller matrix sizes there maybe be an increase in memory usage
     OutputType L_internal[(RowsColsA * RowsColsA - RowsColsA) / 2];
+#pragma HLS ARRAY_PARTITION variable=L_internal complete dim=1
     typename CholeskyTraits::RECIP_DIAG_T diag_internal[RowsColsA];
+#pragma HLS ARRAY_PARTITION variable=diag_internal complete dim=1
 
     typename CholeskyTraits::ACCUM_T square_sum;
     typename CholeskyTraits::ACCUM_T A_cast_to_sum;
@@ -484,8 +486,8 @@ row_loop:
             }
         sum_loop:
             for (int k = 0; k < j; k++) {
+#pragma HLS UNROLL
 #pragma HLS loop_tripcount max = 1 + RowsColsA / 2
-#pragma HLS PIPELINE II = CholeskyTraits::INNER_II
                 prod = -L_internal[i_off + k] * hls::x_conj(L_internal[j_off + k]);
                 prod_cast_to_sum = prod;
                 product_sum += prod_cast_to_sum;
