@@ -145,18 +145,14 @@ struct choleskyTraits<LowerTriangularL,
                       hls::x_complex<ap_fixed<W1, I1, Q1, O1, N1> >,
                       hls::x_complex<ap_fixed<W2, I2, Q2, O2, N2> > > {
     typedef hls::x_complex<ap_fixed<W1 + W1, I1 + I1, AP_RND_CONV, AP_SAT, 0> > PROD_T;
-    typedef hls::x_complex<ap_fixed<(W1 + W1) + BitWidth<RowsColsA>::Value,
-                                    (I1 + I1) + BitWidth<RowsColsA>::Value,
-                                    AP_RND_CONV,
-                                    AP_SAT,
-                                    0> >
-        ACCUM_T;
-    typedef hls::x_complex<ap_fixed<W1 + 1, I1 + 1, AP_RND_CONV, AP_SAT, 0> > ADD_T;
+    typedef hls::x_complex<ap_fixed<W1 + W1, I1 + I1, AP_RND_CONV, AP_SAT, 0> > ACCUM_T;
+    typedef hls::x_complex<ap_fixed<W1 + W1, I1 + I1, AP_RND_CONV, AP_SAT, 0> > ADD_T;
     typedef hls::x_complex<ap_fixed<(W1 + 1) * 2, I1 + 1, AP_RND_CONV, AP_SAT, 0> > DIAG_T;     // Takes result of sqrt
     typedef hls::x_complex<ap_fixed<(W1 + 1) * 2, I1 + 1, AP_RND_CONV, AP_SAT, 0> > OFF_DIAG_T; // Takes result of /
     typedef ap_fixed<2 + (W2 - I2) + W2, 2 + (W2 - I2), AP_RND_CONV, AP_SAT, 0> RECIP_DIAG_T;
     typedef hls::x_complex<ap_fixed<W2, I2, AP_RND_CONV, AP_SAT, 0> >
         L_OUTPUT_T; // Takes new L value.  Same as L output but saturation set
+
     static const int ARCH = 1;
     static const int INNER_II = 1;
     static const int UNROLL_FACTOR = 1;
@@ -165,6 +161,7 @@ struct choleskyTraits<LowerTriangularL,
 };
 
 // Further specialization for std::complex<ap_fixed>
+
 template <bool LowerTriangularL,
           int RowsColsA,
           int W1,
@@ -182,18 +179,14 @@ struct choleskyTraits<LowerTriangularL,
                       std::complex<ap_fixed<W1, I1, Q1, O1, N1> >,
                       std::complex<ap_fixed<W2, I2, Q2, O2, N2> > > {
     typedef std::complex<ap_fixed<W1 + W1, I1 + I1, AP_RND_CONV, AP_SAT, 0> > PROD_T;
-    typedef std::complex<ap_fixed<(W1 + W1) + BitWidth<RowsColsA>::Value,
-                                  (I1 + I1) + BitWidth<RowsColsA>::Value,
-                                  AP_RND_CONV,
-                                  AP_SAT,
-                                  0> >
-        ACCUM_T;
-    typedef std::complex<ap_fixed<W1 + 1, I1 + 1, AP_RND_CONV, AP_SAT, 0> > ADD_T;
+    typedef std::complex<ap_fixed<W1 + W1, I1 + I1, AP_RND_CONV, AP_SAT, 0> > ACCUM_T;
+    typedef std::complex<ap_fixed<W1 + W1, I1 + I1, AP_RND_CONV, AP_SAT, 0> > ADD_T;
     typedef std::complex<ap_fixed<(W1 + 1) * 2, I1 + 1, AP_RND_CONV, AP_SAT, 0> > DIAG_T;     // Takes result of sqrt
     typedef std::complex<ap_fixed<(W1 + 1) * 2, I1 + 1, AP_RND_CONV, AP_SAT, 0> > OFF_DIAG_T; // Takes result of /
     typedef ap_fixed<2 + (W2 - I2) + W2, 2 + (W2 - I2), AP_RND_CONV, AP_SAT, 0> RECIP_DIAG_T;
     typedef std::complex<ap_fixed<W2, I2, AP_RND_CONV, AP_SAT, 0> >
         L_OUTPUT_T; // Takes new L value.  Same as L output but saturation set
+
     static const int ARCH = 1;
     static const int INNER_II = 1;
     static const int UNROLL_FACTOR = 1;
