@@ -252,6 +252,7 @@ Function_cholesky_rsqrt_default:;
 }
 template <int W1, int I1, ap_q_mode Q1, ap_o_mode O1, int N1, int W2, int I2, ap_q_mode Q2, ap_o_mode O2, int N2>
 void cholesky_rsqrt(ap_fixed<W1, I1, Q1, O1, N1> x, ap_fixed<W2, I2, Q2, O2, N2>& res) {
+#pragma HLS INLINE
 Function_cholesky_rsqrt_fixed:;
     // Switched to Newton-Raphson method to avoid high-latency division.
     // y_n+1 = y_n * (1.5 - 0.5 * x * y_n^2)
