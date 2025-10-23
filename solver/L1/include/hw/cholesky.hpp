@@ -493,7 +493,7 @@ row_loop:
             // Round to target format using method specifed by traits defined types.
             new_L = new_L_off_diag;
             // Build sum for use in diagonal calculation for this row.
-            square_sum += hls::x_conj(new_L) * new_L;
+            square_sum += new_L.real() * new_L.real() + new_L.imag() * new_L.imag();
             // Store result
             L_internal[i_off + j] = new_L;
             if (LowerTriangularL == true) {
