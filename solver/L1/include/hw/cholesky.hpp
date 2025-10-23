@@ -278,7 +278,7 @@ Function_cholesky_rsqrt_fixed:;
     // Each iteration consists of low-latency multiplications and additions.
     // 2 iterations are often enough for good convergence with a decent initial guess.
 NEWTON_RAPHSON_LOOP:
-    for (int i = 0; i < 2; i++) {
+    for (int i = 0; i < 1; i++) {
 #pragma HLS PIPELINE
         T_iter y_sq = y * y;
         T_iter term = C_1_5 - (C_0_5 * x * y_sq);
