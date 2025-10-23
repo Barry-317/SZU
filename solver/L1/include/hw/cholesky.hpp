@@ -466,6 +466,7 @@ row_loop:
         // Off diagonal calculation
         square_sum = 0;
     col_loop:
+#pragma HLS PIPELINE
         for (int j = 0; j < i; j++) {
 #pragma HLS loop_tripcount max = 1 + RowsColsA / 2
             // Index generation
