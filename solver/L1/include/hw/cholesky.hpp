@@ -462,7 +462,7 @@ int choleskyAlt(const InputType A[RowsColsA][RowsColsA], OutputType L[RowsColsA]
     typename CholeskyTraits::L_OUTPUT_T new_L_recip;
 
 row_loop:
-#pragma HLS PIPELINE
+#pragma HLS PIPELINE II=1
     for (int i = 0; i < RowsColsA; i++) {
         // Index generation for optimized/packed L_internal memory
         int i_sub1 = i - 1;
