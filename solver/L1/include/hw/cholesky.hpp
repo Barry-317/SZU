@@ -294,17 +294,20 @@ NEWTON_RAPHSON_LOOP:
 // - Required for complex fixed point implementations
 template <typename AType, typename BType, typename CType>
 void cholesky_prod_sum_mult(AType A, BType B, CType& C) {
+#pragma HLS INLINE
 Function_cholesky_prod_sum_mult_real:;
     C = A * B;
 }
 template <typename AType, typename BType, typename CType>
 void cholesky_prod_sum_mult(hls::x_complex<AType> A, BType B, hls::x_complex<CType>& C) {
+#pragma HLS INLINE
 Function_cholesky_prod_sum_mult_complex:;
     C.real(A.real() * B);
     C.imag(A.imag() * B);
 }
 template <typename AType, typename BType, typename CType>
 void cholesky_prod_sum_mult(std::complex<AType> A, BType B, std::complex<CType>& C) {
+#pragma HLS INLINE
 Function_cholesky_prod_sum_mult_complex:;
     C.real(A.real() * B);
     C.imag(A.imag() * B);
