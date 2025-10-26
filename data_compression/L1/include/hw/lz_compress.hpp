@@ -61,9 +61,12 @@ void lzCompress(hls::stream<ap_uint<8> >& inStream, hls::stream<ap_uint<32> >& o
     typedef ap_uint<c_dictEleWidth> uintDict_t;
 
     if (input_size == 0) return;
-    // Dictionary
-    uintDictV_t dict[LZ_DICT_SIZE];
-#pragma HLS BIND_STORAGE variable = dict type = RAM_T2P impl = BRAM
+    // Dual-Dictionary for Ping-Pong Access
+    const int DUAL_DICT_SIZE = LZ_DICT_SIZE / 2;
+    uintDictV_t dict_A[DUAL_DICT_SIZE];
+    uintDictV_t dict_B[DUAL_DICT_SIZE];
+#pragma HLS BIND_STORAGE variable = dict_A type = RAM_T2P impl = BRAM
+#pragma HLS BIND_STORAGE variable = dict_B type = RAM_T2P impl = BRAM
     uintDictV_t resetValue = 0;
     for (int i = 0; i < MATCH_LEVEL; i++) {
 #pragma HLS UNROLL
@@ -71,10 +74,11 @@ void lzCompress(hls::stream<ap_uint<8> >& inStream, hls::stream<ap_uint<32> >& o
     }
 // Initialization of Dictionary
 dict_flush:
-    for (int i = 0; i < LZ_DICT_SIZE; i++) {
+    for (int i = 0; i < DUAL_DICT_SIZE; i++) {
 #pragma HLS PIPELINE II = 1
 #pragma HLS UNROLL FACTOR = 2
-        dict[i] = resetValue;
+        dict_A[i] = resetValue;
+        dict_B[i] = resetValue;
     }
 
     uint8_t present_window[MATCH_LEN];
@@ -86,7 +90,8 @@ dict_flush:
 lz_compress:
     for (uint32_t i = MATCH_LEN - 1; i < input_size - LEFT_BYTES; i++) {
 #pragma HLS PIPELINE II = 1
-#pragma HLS dependence variable = dict inter false
+#pragma HLS dependence variable = dict_A inter false
+#pragma HLS dependence variable = dict_B inter false
         uint32_t currIdx = i - MATCH_LEN + 1;
         // shift present window and load next value
         for (int m = 0; m < MATCH_LEN - 1; m++) {
@@ -96,16 +101,25 @@ lz_compress:
         present_window[MATCH_LEN - 1] = inStream.read();
 
         // Calculate Hash Value
-        uint32_t hash = 0;
+        uint32_t hash_full = 0;
         if (MIN_MATCH == 3) {
-            hash = (present_window[0] << 4) ^ (present_window[1] << 3) ^ (present_window[2] << 2) ^
+            hash_full = (present_window[0] << 4) ^ (present_window[1] << 3) ^ (present_window[2] << 2) ^
                    (present_window[0] << 1) ^ (present_window[1]);
         } else {
-            hash = (present_window[0] << 4) ^ (present_window[1] << 3) ^ (present_window[2] << 2) ^ (present_window[3]);
+            hash_full = (present_window[0] << 4) ^ (present_window[1] << 3) ^ (present_window[2] << 2) ^ (present_window[3]);
         }
 
-        // Dictionary Lookup
-        uintDictV_t dictReadValue = dict[hash];
+        // Ping-Pong Dictionary Access Logic
+        uint32_t hash = hash_full >> 1;
+        ap_uint<1> dict_sel = hash_full & 1;
+
+        uintDictV_t dictReadValue;
+        if (dict_sel == 0) {
+            dictReadValue = dict_A[hash];
+        } else {
+            dictReadValue = dict_B[hash];
+        }
+
         uintDictV_t dictWriteValue = dictReadValue << c_dictEleWidth;
         for (int m = 0; m < MATCH_LEN; m++) {
 #pragma HLS UNROLL
@@ -113,7 +127,11 @@ lz_compress:
         }
         dictWriteValue.range(c_dictEleWidth - 1, MATCH_LEN * 8) = currIdx;
         // Dictionary Update
-        dict[hash] = dictWriteValue;
+        if (dict_sel == 0) {
+            dict_A[hash] = dictWriteValue;
+        } else {
+            dict_B[hash] = dictWriteValue;
+        }
 
         // Match search and Filtering
         // Comp dict pick
