@@ -17,7 +17,7 @@
 set CSIM 1
 set CSYNTH 1
 set COSIM 1
-set VIVADO_SYN 1
+set VIVADO_SYN 0
 set VIVADO_IMPL 0
 set CUR_DIR [pwd]
 set XF_PROJ_ROOT $CUR_DIR/../../../..

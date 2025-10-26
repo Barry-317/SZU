@@ -537,24 +537,36 @@ inline void generateMsgSchedule(hls::stream<SHA256Block>& blk_strm,
             uint32_t W[16];
 #pragma HLS array_partition variable = W complete
 
-        LOOP_SHA256_PREPARE_WT16:
-            for (short t = 0; t < 16; ++t) {
-#pragma HLS pipeline II = 1
-                uint32_t Wt = blk.M[t];
-                W[t] = Wt;
-                w_strm.write(Wt);
-            }
+        LOOP_SHA256_PREPARE_WT_UNIFIED:
+            for (short t = 0; t < 64; ++t) {
+#pragma HLS pipeline II = 1 rewind
+#pragma HLS latency min = 2 max = 2
+                uint32_t Wt;
+                const int idx = t & 15;
+                if (t < 16) {
+                    // Phase 1: Directly load from the input block
+                    Wt = blk.M[t];
+                } else {
+                    // Phase 2: Calculate using the values in the circular buffer
+                    const int idx_m2 = (idx + 14) & 15;
+                    const int idx_m7 = (idx + 9) & 15;
+                    const int idx_m15 = (idx + 1) & 15;
+                    const int idx_m16 = idx;
 
-        LOOP_SHA256_PREPARE_WT64:
-            for (short t = 16; t < 64; ++t) {
-#pragma HLS pipeline II = 1
-                // uint32_t Wt = SSIG1(W[t - 2]) + W[t - 7] + SSIG0(W[t - 15]) + W[t - 16];
-                // W[t] = Wt;
-                uint32_t Wt = SSIG1(W[14]) + W[9] + SSIG0(W[1]) + W[0];
-                for (unsigned char j = 0; j < 15; ++j) {
-                    W[j] = W[j + 1];
+                    uint32_t sum_a = SSIG1(W[idx_m2]) + W[idx_m7];
+#pragma HLS bind_op variable=sum_a op=add impl=dsp
+                    uint32_t sum_b = SSIG0(W[idx_m15]) + W[idx_m16];
+#pragma HLS bind_op variable=sum_b op=add impl=dsp
+
+                    // Second pipeline stage: finish accumulation
+                    Wt = sum_a + sum_b;
+#pragma HLS bind_op variable=Wt op=add impl=dsp
                 }
-                W[15] = Wt;
+
+                // Update the circular buffer entry for the next iteration
+                W[idx] = Wt;
+
+                // Emit the newly generated schedule word
                 w_strm.write(Wt);
             }
         }
@@ -680,8 +692,41 @@ LOOP_SHA256_DIGEST_MAIN:
             uint32_t Kt = K[0];
         LOOP_SHA256_UPDATE_64_ROUNDS:
             for (short t = 0; t < 64; ++t) {
-#pragma HLS pipeline II = 1
-                sha256_iter(a, b, c, d, e, f, g, h, w_strm, Kt, K, t);
+#pragma HLS pipeline II = 1 rewind
+                // Read schedule and constant
+                uint32_t Wt = w_strm.read();
+                uint32_t Kt_curr = K[t];
+
+                // Pre-compute sigma/logic terms
+                uint32_t sigma1_e = BSIG1(e);
+                uint32_t ch_efg = CH(e, f, g);
+                uint32_t sigma0_a = BSIG0(a);
+                uint32_t maj_abc = MAJ(a, b, c);
+
+                // Split add chain into short segments to ease timing
+                uint32_t sum_kw = Kt_curr + Wt;
+#pragma HLS bind_op variable=sum_kw op=add impl=dsp
+                uint32_t sum_h_kw = h + sum_kw;
+#pragma HLS bind_op variable=sum_h_kw op=add impl=dsp
+                uint32_t sum_sigma_ch = sigma1_e + ch_efg;
+#pragma HLS bind_op variable=sum_sigma_ch op=add impl=dsp
+                uint32_t T1 = sum_h_kw + sum_sigma_ch;
+#pragma HLS bind_op variable=T1 op=add impl=dsp
+
+                uint32_t T2 = sigma0_a + maj_abc;
+#pragma HLS bind_op variable=T2 op=add impl=dsp
+
+                // Update working variables
+                h = g;
+                g = f;
+                f = e;
+                e = d + T1;
+#pragma HLS bind_op variable=e op=add impl=dsp
+                d = c;
+                c = b;
+                b = a;
+                a = T1 + T2;
+#pragma HLS bind_op variable=a op=add impl=dsp
             } // 64 round loop
 
             // store working variables to internal states.
