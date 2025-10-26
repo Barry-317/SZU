@@ -83,8 +83,10 @@ inline void preProcessing(hls::stream<ap_uint<32> >& msg_strm,
                           hls::stream<ap_uint<64> >& len_strm,
                           hls::stream<bool>& end_len_strm,
                           hls::stream<SHA256Block>& blk_strm,
-                          hls::stream<uint64_t>& nblk_strm,
-                          hls::stream<bool>& end_nblk_strm) {
+                          hls::stream<uint64_t>& nblk_strm1,
+                          hls::stream<bool>& end_nblk_strm1,
+                          hls::stream<uint64_t>& nblk_strm2,
+                          hls::stream<bool>& end_nblk_strm2) {
 LOOP_SHA256_GENENERATE_MAIN:
     for (bool end_flag = end_len_strm.read(); !end_flag; end_flag = end_len_strm.read()) {
         /// message length in byte.
@@ -93,9 +95,11 @@ LOOP_SHA256_GENENERATE_MAIN:
         uint64_t L = 8 * len;
         /// total number blocks to digest.
         uint64_t blk_num = (len >> 6) + 1 + ((len & 0x3f) > 55);
-        // inform digest function.
-        nblk_strm.write(blk_num);
-        end_nblk_strm.write(false);
+    // inform digest function (write to two control streams so each consumer has SPSC).
+    nblk_strm1.write(blk_num);
+    end_nblk_strm1.write(false);
+    nblk_strm2.write(blk_num);
+    end_nblk_strm2.write(false);
 
     LOOP_SHA256_GEN_FULL_BLKS:
         for (uint64_t j = 0; j < uint64_t(len >> 6); ++j) {
@@ -269,7 +273,8 @@ LOOP_SHA256_GENENERATE_MAIN:
             _XF_SECURITY_PRINT("DEBUG: block sent\n");
         }
     } // main loop
-    end_nblk_strm.write(true);
+    end_nblk_strm1.write(true);
+    end_nblk_strm2.write(true);
 
 } // preProcessing (32-bit ver)
 
@@ -286,8 +291,10 @@ inline void preProcessing(hls::stream<ap_uint<64> >& msg_strm,
                           hls::stream<ap_uint<64> >& len_strm,
                           hls::stream<bool>& end_len_strm,
                           hls::stream<SHA256Block>& blk_strm,
-                          hls::stream<uint64_t>& nblk_strm,
-                          hls::stream<bool>& end_nblk_strm) {
+                          hls::stream<uint64_t>& nblk_strm1,
+                          hls::stream<bool>& end_nblk_strm1,
+                          hls::stream<uint64_t>& nblk_strm2,
+                          hls::stream<bool>& end_nblk_strm2) {
 LOOP_SHA256_GENENERATE_MAIN:
     for (bool end_flag = end_len_strm.read(); !end_flag; end_flag = end_len_strm.read()) {
         /// message length in byte.
@@ -297,9 +304,11 @@ LOOP_SHA256_GENENERATE_MAIN:
         uint64_t L = 8 * len;
         /// total number blocks to digest.
         uint64_t blk_num = (len >> 6) + 1 + ((len & 0x3f) > 55);
-        // inform digest function.
-        nblk_strm.write(blk_num);
-        end_nblk_strm.write(false);
+    // inform digest function (write to two control streams so each consumer has SPSC).
+    nblk_strm1.write(blk_num);
+    end_nblk_strm1.write(false);
+    nblk_strm2.write(blk_num);
+    end_nblk_strm2.write(false);
 
     LOOP_SHA256_GEN_FULL_BLKS:
         for (uint64_t j = 0; j < uint64_t(len >> 6); ++j) {
@@ -491,7 +500,8 @@ LOOP_SHA256_GENENERATE_MAIN:
             } // left < 56
         }
     } // main loop
-    end_nblk_strm.write(true);
+    end_nblk_strm1.write(true);
+    end_nblk_strm2.write(true);
 
 } // preProcessing (64bit ver)
 
@@ -589,8 +599,13 @@ inline void sha256_iter(uint32_t& a,
     uint32_t Wt = w_strm.read();
     /// temporal variables
     uint32_t T1, T2;
-    T1 = h + BSIG1(e) + CH(e, f, g) + Kt + Wt;
-    T2 = BSIG0(a) + MAJ(a, b, c);
+    uint32_t psum_a = h + BSIG1(e);
+    uint32_t psum_b = CH(e, f, g) + Kt;
+    uint32_t psum = psum_a + psum_b;
+    T1 = psum + Wt;
+    uint32_t bsig0_val = BSIG0(a);
+    uint32_t maj_val = MAJ(a, b, c);
+    T2 = bsig0_val + maj_val;
 
     // update working variables.
     h = g;
@@ -689,7 +704,6 @@ LOOP_SHA256_DIGEST_MAIN:
             g = H[6];
             h = H[7];
 
-            uint32_t Kt = K[0];
         LOOP_SHA256_UPDATE_64_ROUNDS:
             for (short t = 0; t < 64; ++t) {
 #pragma HLS pipeline II = 1 rewind
@@ -730,6 +744,7 @@ LOOP_SHA256_DIGEST_MAIN:
             } // 64 round loop
 
             // store working variables to internal states.
+            // Unroll to allow parallel execution
             H[0] = a + H[0];
             H[1] = b + H[1];
             H[2] = c + H[2];
@@ -738,6 +753,7 @@ LOOP_SHA256_DIGEST_MAIN:
             H[5] = f + H[5];
             H[6] = g + H[6];
             H[7] = h + H[7];
+#pragma HLS unroll
         } // block loop
 
         // Emit digest
@@ -800,10 +816,7 @@ inline void sha256_top(hls::stream<ap_uint<m_width> >& msg_strm,
 #pragma HLS STREAM variable = blk_strm depth = 32
 #pragma HLS RESOURCE variable = blk_strm core = FIFO_LUTRAM
 
-    /// number of Blocks, send per msg
-    hls::stream<uint64_t> nblk_strm("nblk_strm");
-#pragma HLS STREAM variable = nblk_strm depth = 32
-#pragma HLS RESOURCE variable = nblk_strm core = FIFO_LUTRAM
+    /// number of Blocks, send per msg (split into two SPSC control streams)
     hls::stream<uint64_t> nblk_strm1("nblk_strm1");
 #pragma HLS STREAM variable = nblk_strm1 depth = 32
 #pragma HLS RESOURCE variable = nblk_strm1 core = FIFO_LUTRAM
@@ -812,9 +825,6 @@ inline void sha256_top(hls::stream<ap_uint<m_width> >& msg_strm,
 #pragma HLS RESOURCE variable = nblk_strm2 core = FIFO_LUTRAM
 
     /// end flag, send per msg.
-    hls::stream<bool> end_nblk_strm("end_nblk_strm");
-#pragma HLS STREAM variable = end_nblk_strm depth = 32
-#pragma HLS RESOURCE variable = end_nblk_strm core = FIFO_LUTRAM
     hls::stream<bool> end_nblk_strm1("end_nblk_strm1");
 #pragma HLS STREAM variable = end_nblk_strm1 depth = 32
 #pragma HLS RESOURCE variable = end_nblk_strm1 core = FIFO_LUTRAM
@@ -827,12 +837,9 @@ inline void sha256_top(hls::stream<ap_uint<m_width> >& msg_strm,
 #pragma HLS STREAM variable = w_strm depth = 32
 #pragma HLS RESOURCE variable = w_strm core = FIFO_LUTRAM
 
-    // Generate block stream
+    // Generate block stream (preProcessing now writes two control streams directly)
     preProcessing(msg_strm, len_strm, end_len_strm, //
-                  blk_strm, nblk_strm, end_nblk_strm);
-
-    // Duplicate number of block stream and its end flag stream
-    dup_strm(nblk_strm, end_nblk_strm, nblk_strm1, end_nblk_strm1, nblk_strm2, end_nblk_strm2);
+                  blk_strm, nblk_strm1, end_nblk_strm1, nblk_strm2, end_nblk_strm2);
 
     // Generate the message schedule in stream
     generateMsgSchedule(blk_strm, nblk_strm1, end_nblk_strm1, w_strm);
