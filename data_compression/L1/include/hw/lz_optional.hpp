@@ -554,10 +554,17 @@ void lzBooster(hls::stream<IntVectorStream_dt<32, 1> >& inStream, hls::stream<In
  * @param left_bytes last 64 left over bytes
  *
  */
-template <int MAX_MATCH_LEN, int BOOSTER_OFFSET_WINDOW = 16 * 1024, int LEFT_BYTES = 64>
+template <int MAX_MATCH_LEN, int BOOSTER_OFFSET_WINDOW = 8 * 1024, int LEFT_BYTES = 64>
 void lzBooster(hls::stream<compressd_dt>& inStream, hls::stream<compressd_dt>& outStream, uint32_t input_size) {
     if (input_size == 0) return;
-    uint8_t local_mem[BOOSTER_OFFSET_WINDOW];
+
+    // Dual-buffer for Ping-Pong Access
+    const int DUAL_BOOSTER_WINDOW = BOOSTER_OFFSET_WINDOW / 2;
+    uint8_t local_mem_A[DUAL_BOOSTER_WINDOW];
+    uint8_t local_mem_B[DUAL_BOOSTER_WINDOW];
+#pragma HLS BIND_STORAGE variable = local_mem_A type = RAM_S2P impl = BRAM
+#pragma HLS BIND_STORAGE variable = local_mem_B type = RAM_S2P impl = BRAM
+
     uint32_t match_loc = 0;
     uint32_t match_len = 0;
     compressd_dt outValue;
@@ -566,12 +573,19 @@ void lzBooster(hls::stream<compressd_dt>& inStream, hls::stream<compressd_dt>& o
     bool outFlag = false;
     bool boostFlag = false;
     uint16_t skip_len = 0;
-    uint8_t nextMatchCh = local_mem[match_loc % BOOSTER_OFFSET_WINDOW];
+    uint8_t nextMatchCh;
+    uint32_t read_addr_init = match_loc % BOOSTER_OFFSET_WINDOW;
+    if (read_addr_init & 1) {
+        nextMatchCh = local_mem_B[read_addr_init >> 1];
+    } else {
+        nextMatchCh = local_mem_A[read_addr_init >> 1];
+    }
 
 lz_booster:
     for (uint32_t i = 0; i < (input_size - LEFT_BYTES); i++) {
 #pragma HLS PIPELINE II = 1
-#pragma HLS dependence variable = local_mem inter false
+#pragma HLS dependence variable = local_mem_A inter false
+#pragma HLS dependence variable = local_mem_B inter false
         compressd_dt inValue = inStream.read();
         uint8_t tCh = inValue.range(7, 0);
         uint8_t tLen = inValue.range(15, 8);
@@ -582,7 +596,15 @@ lz_booster:
             boostFlag = false;
         }
         uint8_t match_ch = nextMatchCh;
-        local_mem[i % BOOSTER_OFFSET_WINDOW] = tCh;
+
+        // Write to dual-buffer
+        uint32_t write_addr = i % BOOSTER_OFFSET_WINDOW;
+        if (write_addr & 1) {
+            local_mem_B[write_addr >> 1] = tCh;
+        } else {
+            local_mem_A[write_addr >> 1] = tCh;
+        }
+
         outFlag = false;
 
         if (skip_len) {
@@ -609,7 +631,15 @@ lz_booster:
                 matchFlag = false;
             }
         }
-        nextMatchCh = local_mem[match_loc % BOOSTER_OFFSET_WINDOW];
+
+        // Read from dual-buffer for next iteration
+        uint32_t read_addr = match_loc % BOOSTER_OFFSET_WINDOW;
+        if (read_addr & 1) {
+            nextMatchCh = local_mem_B[read_addr >> 1];
+        } else {
+            nextMatchCh = local_mem_A[read_addr >> 1];
+        }
+
         if (outFlag) outStream << outStreamValue;
     }
     outStream << outValue;

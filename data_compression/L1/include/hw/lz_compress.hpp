@@ -51,9 +51,9 @@ namespace compression {
 template <int MATCH_LEN,
           int MIN_MATCH,
           int LZ_MAX_OFFSET_LIMIT,
-          int MATCH_LEVEL = 6,
+          int MATCH_LEVEL = 4,
           int MIN_OFFSET = 1,
-          int LZ_DICT_SIZE = 1 << 12,
+          int LZ_DICT_SIZE = 1 << 9,
           int LEFT_BYTES = 64>
 void lzCompress(hls::stream<ap_uint<8> >& inStream, hls::stream<ap_uint<32> >& outStream, uint32_t input_size) {
     const int c_dictEleWidth = (MATCH_LEN * 8 + 24);
@@ -61,12 +61,16 @@ void lzCompress(hls::stream<ap_uint<8> >& inStream, hls::stream<ap_uint<32> >& o
     typedef ap_uint<c_dictEleWidth> uintDict_t;
 
     if (input_size == 0) return;
-    // Dual-Dictionary for Ping-Pong Access
-    const int DUAL_DICT_SIZE = LZ_DICT_SIZE / 2;
-    uintDictV_t dict_A[DUAL_DICT_SIZE];
-    uintDictV_t dict_B[DUAL_DICT_SIZE];
+    // Quad-Dictionary for Ping-Pong Access
+    const int QUAD_DICT_SIZE = LZ_DICT_SIZE / 4;
+    uintDictV_t dict_A[QUAD_DICT_SIZE];
+    uintDictV_t dict_B[QUAD_DICT_SIZE];
+    uintDictV_t dict_C[QUAD_DICT_SIZE];
+    uintDictV_t dict_D[QUAD_DICT_SIZE];
 #pragma HLS BIND_STORAGE variable = dict_A type = RAM_T2P impl = BRAM
 #pragma HLS BIND_STORAGE variable = dict_B type = RAM_T2P impl = BRAM
+#pragma HLS BIND_STORAGE variable = dict_C type = RAM_T2P impl = BRAM
+#pragma HLS BIND_STORAGE variable = dict_D type = RAM_T2P impl = BRAM
     uintDictV_t resetValue = 0;
     for (int i = 0; i < MATCH_LEVEL; i++) {
 #pragma HLS UNROLL
@@ -74,11 +78,13 @@ void lzCompress(hls::stream<ap_uint<8> >& inStream, hls::stream<ap_uint<32> >& o
     }
 // Initialization of Dictionary
 dict_flush:
-    for (int i = 0; i < DUAL_DICT_SIZE; i++) {
+    for (int i = 0; i < QUAD_DICT_SIZE; i++) {
 #pragma HLS PIPELINE II = 1
-#pragma HLS UNROLL FACTOR = 2
+#pragma HLS UNROLL FACTOR = 4
         dict_A[i] = resetValue;
         dict_B[i] = resetValue;
+        dict_C[i] = resetValue;
+        dict_D[i] = resetValue;
     }
 
     uint8_t present_window[MATCH_LEN];
@@ -92,6 +98,8 @@ lz_compress:
 #pragma HLS PIPELINE II = 1
 #pragma HLS dependence variable = dict_A inter false
 #pragma HLS dependence variable = dict_B inter false
+#pragma HLS dependence variable = dict_C inter false
+#pragma HLS dependence variable = dict_D inter false
         uint32_t currIdx = i - MATCH_LEN + 1;
         // shift present window and load next value
         for (int m = 0; m < MATCH_LEN - 1; m++) {
@@ -109,15 +117,16 @@ lz_compress:
             hash_full = (present_window[0] << 4) ^ (present_window[1] << 3) ^ (present_window[2] << 2) ^ (present_window[3]);
         }
 
-        // Ping-Pong Dictionary Access Logic
-        uint32_t hash = hash_full >> 1;
-        ap_uint<1> dict_sel = hash_full & 1;
+        // Quad-Dictionary Ping-Pong Access Logic
+        uint32_t hash = (hash_full >> 2) & (QUAD_DICT_SIZE - 1); // Index for smaller dicts
+        ap_uint<2> dict_sel = hash_full & 3; // 0,1,2,3 for dict_A,B,C,D
 
         uintDictV_t dictReadValue;
-        if (dict_sel == 0) {
-            dictReadValue = dict_A[hash];
-        } else {
-            dictReadValue = dict_B[hash];
+        switch (dict_sel) {
+            case 0: dictReadValue = dict_A[hash]; break;
+            case 1: dictReadValue = dict_B[hash]; break;
+            case 2: dictReadValue = dict_C[hash]; break;
+            case 3: dictReadValue = dict_D[hash]; break;
         }
 
         uintDictV_t dictWriteValue = dictReadValue << c_dictEleWidth;
@@ -127,10 +136,11 @@ lz_compress:
         }
         dictWriteValue.range(c_dictEleWidth - 1, MATCH_LEN * 8) = currIdx;
         // Dictionary Update
-        if (dict_sel == 0) {
-            dict_A[hash] = dictWriteValue;
-        } else {
-            dict_B[hash] = dictWriteValue;
+        switch (dict_sel) {
+            case 0: dict_A[hash] = dictWriteValue; break;
+            case 1: dict_B[hash] = dictWriteValue; break;
+            case 2: dict_C[hash] = dictWriteValue; break;
+            case 3: dict_D[hash] = dictWriteValue; break;
         }
 
         // Match search and Filtering
@@ -251,7 +261,7 @@ void lzCompress(hls::stream<IntVectorStream_dt<8, 1> >& inStream, hls::stream<In
         dict_flush:
             for (int i = 0; i < LZ_DICT_SIZE; i++) {
 #pragma HLS PIPELINE II = 1
-#pragma HLS UNROLL FACTOR = 2
+#pragma HLS UNROLL FACTOR = 4
                 dict[i] = resetValue;
             }
             resetDictFlag = false;
